@@ -7,21 +7,25 @@ import { Register } from './pages/Register';
 import { Dashboard } from './pages/Dashboard';
 import { GroupDetails } from './pages/GroupDetails';
 
+import { ThemeProvider } from './context/ThemeContext';
+
 function App() {
   return (
     <Router>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+        <ThemeProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
 
-          <Route element={<ProtectedRoute />}>
-            <Route path="/" element={<Layout><Dashboard /></Layout>} />
-            <Route path="/groups/:id" element={<Layout><GroupDetails /></Layout>} />
-          </Route>
+            <Route element={<ProtectedRoute />}>
+              <Route path="/" element={<Layout><Dashboard /></Layout>} />
+              <Route path="/groups/:id" element={<Layout><GroupDetails /></Layout>} />
+            </Route>
 
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
+            <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
+        </ThemeProvider>
       </AuthProvider>
     </Router>
   );

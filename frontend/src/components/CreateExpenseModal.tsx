@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import client from '../api/client';
 
 interface Member {
@@ -23,10 +23,21 @@ export const CreateExpenseModal: React.FC<CreateExpenseModalProps> = ({ groupId,
     const [amount, setAmount] = useState('');
     const [paidBy, setPaidBy] = useState(currentUserId);
     const [note, setNote] = useState('');
-    const [splitType, setSplitType] = useState<'equal' | 'exact' | 'percentage'>('equal');
-    const [selectedMembers, setSelectedMembers] = useState<string[]>(members.map(m => m.userId));
-    const [exactAmounts, setExactAmounts] = useState<Record<string, string>>({});
-    const [percentages, setPercentages] = useState<Record<string, string>>({});
+
+    // New split mode state
+    const [splitMode, setSplitMode] = useState<'equal' | 'reimbursement'>('equal');
+
+    // selectedMembers tracks WHO ELSE is involved (excluding payer logic)
+    // Initially select everyone except payer (if reimbursement) or everyone (if equal)
+    // To simplify: selectedMembers will track the "Other people" involved.
+    const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+
+    // Initialize selectedMembers when modal opens or paidBy changes
+    useEffect(() => {
+        // Default: Select everyone else
+        const others = members.filter(m => m.userId !== paidBy).map(m => m.userId);
+        setSelectedMembers(others);
+    }, [paidBy, members]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -35,51 +46,35 @@ export const CreateExpenseModal: React.FC<CreateExpenseModalProps> = ({ groupId,
 
         let participants: { userId: string; shareAmount: number }[] = [];
 
-        if (splitType === 'equal') {
-            if (selectedMembers.length === 0) return;
-            const share = numAmount / selectedMembers.length;
-            participants = selectedMembers.map(id => ({
-                userId: id,
-                shareAmount: parseFloat(share.toFixed(2)),
-            }));
+        // Construct the list of people splitting the cost
+        let splitAmongIds = [...selectedMembers];
 
-            const currentSum = participants.reduce((sum, p) => sum + p.shareAmount, 0);
-            const diff = numAmount - currentSum;
-            if (Math.abs(diff) > 0.001) {
-                participants[0].shareAmount += diff;
+        if (splitMode === 'equal') {
+            // In equal mode, the payer is ALSO included in the split
+            if (!splitAmongIds.includes(paidBy)) {
+                splitAmongIds.push(paidBy);
             }
-        } else if (splitType === 'exact') {
-            let sum = 0;
-            participants = members.map(m => {
-                const val = parseFloat(exactAmounts[m.userId] || '0');
-                sum += val;
-                return { userId: m.userId, shareAmount: val };
-            }).filter(p => p.shareAmount > 0);
+        } else {
+            // In reimbursement mode, the payer is EXCLUDED (already handled by selectedMembers logic, but safety check)
+            splitAmongIds = splitAmongIds.filter(id => id !== paidBy);
+        }
 
-            if (Math.abs(sum - numAmount) > 0.01) {
-                alert(`A soma dos valores (R$ ${sum.toFixed(2)}) não bate com o total (R$ ${numAmount.toFixed(2)})`);
-                return;
-            }
-        } else if (splitType === 'percentage') {
-            let sum = 0;
-            participants = members.map(m => {
-                const pct = parseFloat(percentages[m.userId] || '0');
-                sum += pct;
-                const val = (numAmount * pct) / 100;
-                return { userId: m.userId, shareAmount: parseFloat(val.toFixed(2)) };
-            }).filter(p => p.shareAmount > 0);
+        if (splitAmongIds.length === 0) {
+            alert('Selecione pelo menos uma pessoa para dividir.');
+            return;
+        }
 
-            if (Math.abs(sum - 100) > 0.1) {
-                alert(`A soma das porcentagens (${sum}%) deve ser 100%`);
-                return;
-            }
+        const share = numAmount / splitAmongIds.length;
+        participants = splitAmongIds.map(id => ({
+            userId: id,
+            shareAmount: parseFloat(share.toFixed(2)),
+        }));
 
-            // Fix rounding
-            const currentSum = participants.reduce((sum, p) => sum + p.shareAmount, 0);
-            const diff = numAmount - currentSum;
-            if (Math.abs(diff) > 0.001 && participants.length > 0) {
-                participants[0].shareAmount += diff;
-            }
+        // Fix rounding
+        const currentSum = participants.reduce((sum, p) => sum + p.shareAmount, 0);
+        const diff = numAmount - currentSum;
+        if (Math.abs(diff) > 0.001) {
+            participants[0].shareAmount += diff;
         }
 
         try {
@@ -144,89 +139,68 @@ export const CreateExpenseModal: React.FC<CreateExpenseModalProps> = ({ groupId,
                         </select>
                     </div>
 
-                    <div className="mb-4">
-                        <label className="block text-gray-700 dark:text-gray-300 mb-2">Tipo de Divisão</label>
-                        <div className="flex space-x-4 mb-2">
-                            <label className="flex items-center dark:text-gray-300">
-                                <input
-                                    type="radio"
-                                    value="equal"
-                                    checked={splitType === 'equal'}
-                                    onChange={() => setSplitType('equal')}
-                                    className="mr-2"
-                                />
-                                Igual
-                            </label>
-                            <label className="flex items-center dark:text-gray-300">
-                                <input
-                                    type="radio"
-                                    value="exact"
-                                    checked={splitType === 'exact'}
-                                    onChange={() => setSplitType('exact')}
-                                    className="mr-2"
-                                />
-                                Valor Exato
-                            </label>
-                            <label className="flex items-center dark:text-gray-300">
-                                <input
-                                    type="radio"
-                                    value="percentage"
-                                    checked={splitType === 'percentage'}
-                                    onChange={() => setSplitType('percentage')}
-                                    className="mr-2"
-                                />
-                                Porcentagem
-                            </label>
+                    <div className="mb-6">
+                        <label className="block text-gray-700 dark:text-gray-300 mb-2">Como dividir?</label>
+                        <div className="grid grid-cols-1 gap-3 mb-4">
+                            <button
+                                type="button"
+                                onClick={() => setSplitMode('equal')}
+                                className={`p-3 rounded border text-left flex items-center transition-colors ${splitMode === 'equal'
+                                        ? 'border-teal-500 bg-teal-50 dark:bg-teal-900/30 ring-1 ring-teal-500'
+                                        : 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'
+                                    }`}
+                            >
+                                <div className={`w-5 h-5 rounded-full border mr-3 flex items-center justify-center ${splitMode === 'equal' ? 'border-teal-500 bg-teal-500' : 'border-gray-400'
+                                    }`}>
+                                    {splitMode === 'equal' && <div className="w-2 h-2 bg-white rounded-full" />}
+                                </div>
+                                <div>
+                                    <div className="font-medium dark:text-white">Dividir igualmente</div>
+                                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                                        Você e os selecionados dividem a conta
+                                    </div>
+                                </div>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => setSplitMode('reimbursement')}
+                                className={`p-3 rounded border text-left flex items-center transition-colors ${splitMode === 'reimbursement'
+                                        ? 'border-teal-500 bg-teal-50 dark:bg-teal-900/30 ring-1 ring-teal-500'
+                                        : 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'
+                                    }`}
+                            >
+                                <div className={`w-5 h-5 rounded-full border mr-3 flex items-center justify-center ${splitMode === 'reimbursement' ? 'border-teal-500 bg-teal-500' : 'border-gray-400'
+                                    }`}>
+                                    {splitMode === 'reimbursement' && <div className="w-2 h-2 bg-white rounded-full" />}
+                                </div>
+                                <div>
+                                    <div className="font-medium dark:text-white">Receber valor total</div>
+                                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                                        Os selecionados te devem o valor total
+                                    </div>
+                                </div>
+                            </button>
                         </div>
 
-                        <div className="space-y-2 max-h-60 overflow-y-auto border border-gray-200 dark:border-gray-600 p-2 rounded">
-                            {splitType === 'equal' && members.map(m => (
-                                <div key={m.userId} className="flex items-center">
+                        <label className="block text-gray-700 dark:text-gray-300 mb-2">Com quem?</label>
+                        <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-200 dark:border-gray-600 p-2 rounded">
+                            {members.filter(m => m.userId !== paidBy).map(m => (
+                                <div key={m.userId} className="flex items-center p-1 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer" onClick={() => toggleMember(m.userId)}>
                                     <input
                                         type="checkbox"
                                         checked={selectedMembers.includes(m.userId)}
-                                        onChange={() => toggleMember(m.userId)}
-                                        className="mr-2"
+                                        onChange={() => { }} // Handled by parent div
+                                        className="mr-3 h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
                                     />
                                     <span className="dark:text-gray-300">{m.user.name}</span>
                                 </div>
                             ))}
-
-                            {splitType === 'exact' && members.map(m => (
-                                <div key={m.userId} className="flex items-center justify-between">
-                                    <span className="dark:text-gray-300">{m.user.name}</span>
-                                    <div className="flex items-center">
-                                        <span className="mr-1 dark:text-gray-400">R$</span>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            className="w-24 border border-gray-300 dark:border-gray-600 p-1 rounded dark:bg-gray-700 dark:text-white text-right"
-                                            value={exactAmounts[m.userId] || ''}
-                                            onChange={(e) => setExactAmounts({ ...exactAmounts, [m.userId]: e.target.value })}
-                                            placeholder="0.00"
-                                        />
-                                    </div>
-                                </div>
-                            ))}
-
-                            {splitType === 'percentage' && members.map(m => (
-                                <div key={m.userId} className="flex items-center justify-between">
-                                    <span className="dark:text-gray-300">{m.user.name}</span>
-                                    <div className="flex items-center">
-                                        <input
-                                            type="number"
-                                            step="0.1"
-                                            className="w-20 border border-gray-300 dark:border-gray-600 p-1 rounded dark:bg-gray-700 dark:text-white text-right"
-                                            value={percentages[m.userId] || ''}
-                                            onChange={(e) => setPercentages({ ...percentages, [m.userId]: e.target.value })}
-                                            placeholder="0"
-                                        />
-                                        <span className="ml-1 dark:text-gray-400">%</span>
-                                    </div>
-                                </div>
-                            ))}
+                            {members.filter(m => m.userId !== paidBy).length === 0 && (
+                                <p className="text-gray-500 dark:text-gray-400 text-sm italic">Nenhum outro membro no grupo.</p>
+                            )}
                         </div>
-                        {splitType === 'equal' && selectedMembers.length === 0 && <p className="text-red-500 text-sm mt-1">Selecione pelo menos um participante.</p>}
+                        {selectedMembers.length === 0 && <p className="text-red-500 text-sm mt-1">Selecione pelo menos uma pessoa.</p>}
                     </div>
 
                     <div className="mb-6">
@@ -247,7 +221,7 @@ export const CreateExpenseModal: React.FC<CreateExpenseModalProps> = ({ groupId,
                         </button>
                         <button
                             type="submit"
-                            disabled={splitType === 'equal' && selectedMembers.length === 0}
+                            disabled={selectedMembers.length === 0}
                             className="bg-teal-600 text-white px-4 py-2 rounded hover:bg-teal-700 disabled:opacity-50"
                         >
                             Salvar
